@@ -7,11 +7,13 @@
 // every minute they do not move) and too narrow for the jumpy ones.
 //
 // This entry keeps the persistence centre (the last price is the median) but
-// estimates each market's own minute-move scale from its last 24 hours of
-// 1-minute changes, robustly (an average of two normal-consistent scale
-// estimates from the change distribution's interquantile ranges, so the large
-// atom at zero and the occasional jump do not blow it up), floors and caps it,
-// and fans out with the normal quantiles on a sqrt(h) random-walk scaling.
+// estimates each market's own minute-move scale from its recent 1-minute
+// changes, robustly (an average of two normal-consistent scale estimates from
+// the change distribution's interquantile ranges, so the large atom at zero
+// and the occasional jump do not blow it up). Two windows, 12 h and 24 h, are
+// blended geometrically and width-calibrated, the result is floored and
+// capped, and the fan opens with the normal quantiles on a sqrt(h)
+// random-walk scaling.
 //
 // Reads every <id>.in in the input directory, writes <id>.out per case:
 // {"forecasts":[{"id","q"}]} with horizon_minutes rows of the five quantiles
@@ -27,8 +29,11 @@ const OUTPUT_DIR = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 const QUANTILES = [0.05, 0.25, 0.5, 0.75, 0.95];
 /** The standard normal's quantile at each level, to 6 decimals. */
 const Z = [-1.644854, -0.67449, 0, 0.67449, 1.644854];
-/** Minutes of recent history the volatility estimate reads. */
-const VOL_WINDOW = 1440;
+/** Minutes of recent history the two volatility windows read. */
+const VOL_WINDOW_SHORT = 720;
+const VOL_WINDOW_LONG = 1440;
+/** Width calibration applied to the blended scale (backtest-tuned). */
+const WIDTH_CALIBRATION = 1.1;
 /** Per-market scale bounds, in price units per sqrt-minute. */
 const SIGMA_FLOOR = 0.0002;
 const SIGMA_CAP = 0.02;
@@ -57,19 +62,32 @@ function quantileSorted(sorted: number[], tau: number): number {
 }
 
 /**
- * One market's minute-move scale from its recent 1-minute changes: the average
- * of the IQR-based and the 5-95-range-based normal-consistent estimates.
+ * The minute-move scale over one window of a market's recent 1-minute changes:
+ * the average of the IQR-based and the 5-95-range-based normal-consistent
+ * estimates, so the zero atom and single jumps do not dominate it.
  */
-function marketSigma(prices: number[]): number {
-  const from = Math.max(1, prices.length - VOL_WINDOW);
+function windowSigma(prices: number[], window: number): number {
+  const from = Math.max(1, prices.length - window);
   const changes: number[] = [];
   for (let i = from; i < prices.length; i++) changes.push((prices[i] as number) - (prices[i - 1] as number));
-  if (changes.length === 0) return SIGMA_FLOOR;
+  if (changes.length === 0) return 0;
   const s = [...changes].sort((a, b) => a - b);
   const byIqr = (quantileSorted(s, 0.75) - quantileSorted(s, 0.25)) / 1.349;
   const byRange = (quantileSorted(s, 0.95) - quantileSorted(s, 0.05)) / 3.29;
-  const sigma = (byIqr + byRange) / 2;
-  return Math.min(SIGMA_CAP, Math.max(SIGMA_FLOOR, sigma));
+  return (byIqr + byRange) / 2;
+}
+
+/**
+ * One market's minute-move scale: the geometric mean of its 12-hour and
+ * 24-hour window scales, width-calibrated. Blending two windows keeps the
+ * estimate responsive to a fresh volatility regime without letting a single
+ * quiet or wild half-day dictate the fan on its own.
+ */
+function marketSigma(prices: number[]): number {
+  const short = windowSigma(prices, VOL_WINDOW_SHORT);
+  const long = windowSigma(prices, VOL_WINDOW_LONG);
+  const blended = Math.sqrt(Math.max(short, 1e-9) * Math.max(long, 1e-9)) * WIDTH_CALIBRATION;
+  return Math.min(SIGMA_CAP, Math.max(SIGMA_FLOOR, blended));
 }
 
 /** The forecast of one market: horizon rows of five quantiles around its last price. */
