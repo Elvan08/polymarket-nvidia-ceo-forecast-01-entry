@@ -33,9 +33,21 @@ const Z = [-1.644854, -0.67449, 0, 0.67449, 1.644854];
 const VOL_WINDOW_SHORT = 720;
 const VOL_WINDOW_LONG = 1440;
 /** Width calibration applied to the blended scale (backtest-tuned). */
-const WIDTH_CALIBRATION = 1.1;
-/** Per-market scale bounds, in price units per sqrt-minute. */
-const SIGMA_FLOOR = 0.0002;
+const WIDTH_CALIBRATION = 1.3;
+/**
+ * Extra widening for the two outer quantiles only. The graded practice run's
+ * 90% band covered just 79% of realised prices: the centre of the fan was
+ * about right, the tails were not — a market that sat still for days and then
+ * jumped on a headline landed far outside a fan sized from its quiet history.
+ */
+const TAIL_WIDENING = 1.5;
+/**
+ * Per-market scale bounds, in price units per sqrt-minute. The floor matters
+ * most: a market whose recent changes are nearly all zero gets a scale at the
+ * floor, and 0.0002 left those fans far too narrow when the market woke up;
+ * 0.0005 costs nothing measurable on quiet markets and covers much better.
+ */
+const SIGMA_FLOOR = 0.0005;
 const SIGMA_CAP = 0.02;
 
 interface CaseMarket {
@@ -90,6 +102,9 @@ function marketSigma(prices: number[]): number {
   return Math.min(SIGMA_CAP, Math.max(SIGMA_FLOOR, blended));
 }
 
+/** Per-quantile z multipliers: the outer pair opens wider than the inner pair. */
+const Z_MULT = [TAIL_WIDENING, 1, 1, 1, TAIL_WIDENING];
+
 /** The forecast of one market: horizon rows of five quantiles around its last price. */
 function forecast(m: CaseMarket, horizon: number): number[][] {
   if (m.prices.length === 0) throw new Error(`market ${m.id} has no prices`);
@@ -98,7 +113,7 @@ function forecast(m: CaseMarket, horizon: number): number[][] {
   const rows: number[][] = [];
   for (let h = 1; h <= horizon; h++) {
     const w = sigma * Math.sqrt(h);
-    rows.push(Z.map((z) => price6(x + z * w)));
+    rows.push(Z.map((z, j) => price6(x + z * (Z_MULT[j] as number) * w)));
   }
   return rows;
 }
