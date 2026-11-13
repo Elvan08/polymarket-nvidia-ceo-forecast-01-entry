@@ -33,21 +33,25 @@ const Z = [-1.644854, -0.67449, 0, 0.67449, 1.644854];
 const VOL_WINDOW_SHORT = 720;
 const VOL_WINDOW_LONG = 1440;
 /** Width calibration applied to the blended scale (backtest-tuned). */
-const WIDTH_CALIBRATION = 1.3;
+const WIDTH_CALIBRATION = 1.2;
 /**
- * Extra widening for the two outer quantiles only. The graded practice run's
- * 90% band covered just 79% of realised prices: the centre of the fan was
- * about right, the tails were not — a market that sat still for days and then
- * jumped on a headline landed far outside a fan sized from its quiet history.
+ * Extra widening for the two outer quantiles only. The first graded practice
+ * run's 90% band covered just 79% of realised prices: the centre of the fan
+ * was about right, the tails were not — a market that sat still for days and
+ * then jumped on a headline landed far outside a fan sized from its quiet
+ * history. Widening the tails to 1.5 then overshot (95% coverage, worse
+ * pinball), so 1.25 splits the difference: most of the jump insurance at
+ * about half the calm-regime cost.
  */
-const TAIL_WIDENING = 1.5;
+const TAIL_WIDENING = 1.25;
 /**
  * Per-market scale bounds, in price units per sqrt-minute. The floor matters
  * most: a market whose recent changes are nearly all zero gets a scale at the
- * floor, and 0.0002 left those fans far too narrow when the market woke up;
- * 0.0005 costs nothing measurable on quiet markets and covers much better.
+ * floor, and 0.0002 left those fans far too narrow when the market woke up.
+ * 0.0004 (paired with the 1.25 tail widening) targets ~92% realised coverage
+ * of the 90% band — near the pinball optimum, with the tails still insured.
  */
-const SIGMA_FLOOR = 0.0005;
+const SIGMA_FLOOR = 0.0004;
 const SIGMA_CAP = 0.02;
 
 interface CaseMarket {
